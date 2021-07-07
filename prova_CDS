@@ -1,0 +1,164 @@
+%UNIVERSIDADE FEDERAL DO PARA - UFPA
+%PROGRAMA DE POS GRADUACAO EM ENG. ELETRICA - PPGEE 
+%DISCIPLINA DE CONTROLE DIGITAL DE SISTEMAS
+%PROFESSOR DOUTOR ANTONIO DA SILVA SILVEIRA - asilveira@ufpa.br
+%DISCENTE: WOLDSON LEONNE PEREIRA GOMES - wleonne@hotmail.com 
+
+%%
+clear all; close all; clc; 
+
+% Carregar os dados a serem utilizados (datalog) 
+dados=load('dados.txt'); 
+td=dados(:,1); 
+ud=dados(:,2); 
+yd=dados(:,3); 
+tfinal = td(end);
+disp('Numero de amostras:')
+N=length(td)
+
+t = td(1:N);      %|
+u = ud(1:N);      %| Variaveis de tempo, entrada e saida 
+y = yd(1:N);      %|
+
+
+% Periodo entre amostras (em segundo)
+disp('Periodo dos dados amostrados (s):')
+Ts = t(2)-t(1) 
+
+figure()
+plot(t,y,'m','LineWidth',1.3); hold on;
+plot(t,u,'.-k','LineWidth',1.3);
+title('Resposta da planta (MA)')
+legend('y','u')
+
+
+%% =-=- Estimacao dos parametros via MQR e calculo da variancia de xi =-=-=
+
+P = 1000*eye(3,3); % cond. inic.
+theta = [0.001 ; 0.001; 0.001 ]; % cond. inic.
+eest(1:2)=0; % cond. inic.
+
+for k=3:N,
+    phi = [ -y(k-1) ; u(k-1) ; eest(k-1) ];
+    L = (P*phi)/(1+phi'*P*phi);
+    eest(k) = y(k) -phi'*theta;
+    theta = theta +L*eest(k);
+    P = ( eye(3,3) -L*phi' )*P;
+end          
+
+% Parametros estimados
+a1 = theta(1); a2 = theta(2); b0 = theta(3);
+
+% G(z) estimada
+Gz_est = tf(b0,[1 a1 a2],Ts)
+
+variancia = var(eest(3:N) ); % Variancia de ruido do processo
+%analisando a resposta do sistema, bem como o datalog, percebe-se que
+%demora 3 amostras para um estimulo na entrada
+
+
+%% -=-=-=-=-=-=-=-=-= PROJETO  GMVC  -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+
+% Sintonia do GMV incremental a partir da eq. diofantina resolvida
+Az = [1 a1 a2];
+DAz = conv([1 -1],Az);
+   da1 = DAz(2); da2 = DAz(3); da3 = DAz(4);
+f0 = -da1;
+f1 = -da2;
+f2 = -da3;
+lambda = 0.01; % ponderacao do esforco de controle
+d = 1;
+    
+% Simulacao do sistema em malha fechada
+  % Sequencia de referencia
+    yr(1:5)=0; yr(6:N+d)=1;
+    
+  % Adicao do ruido gausiano, com variancia {var(eest(3:N)}
+    xi = wgn(1,N,variancia,'linear');
+    
+  % Condicoes iniciais
+    for k = 1:2+d
+      e(k) = 0;
+      du(k)=0;
+    end
+    
+  % Loop de simulacao
+    for k = 3:N
+          y(k) = -a1*y(k-1) -a2*y(k-2) +b0*u(k-1)  +xi(k); 
+             
+  % Controle GMV Incremental
+      du(k) = (1/(b0+lambda))*(yr(k+d) -f0*y(k) -f1*y(k-1) -f2*y(k-2) );
+      u(k) = u(k-1) +du(k);
+    end
+
+% Plot dos resultados do GMVC (2 questao)
+figure();
+subplot(211)
+  plot(t,yr(1:N),'--k','LineWidth',1.3);hold on
+  plot(t,y,'m','LineWidth',1.3);
+    ylabel('Output'); xlabel('Time (s)');
+    legend('r(t)','y(t)');
+    axis([0 N -1 2])
+subplot(212)
+  plot(t,u,'b','LineWidth',1.3);
+    ylabel('Control'); xlabel('Time (s)');
+suptitle('GMVC Incremental') 
+
+% Analise de desempenho
+[Jise, Jisu, J] = desempenho(yr, y, u, N)
+
+
+%% -=-=-=-=-=-=-=-=- Sintonia do GMVC para o PID -=-=-=-=-=-=-=-=-=-=--=-=-
+
+% Controlador PID Digital
+kp = 1; ki = 1; kd = 1;
+
+  s0 = kp +ki*Ts +kd/Ts;
+  s1 = -kp -2*kd/Ts;
+  s2 = kd/Ts;
+  
+% Argumentacao Estocastica via GMVC (baseado em sintonia PID)
+% Sintonia obtida a partir da eq. diofantina resolvida
+  e0_sa = s0;
+  f0_sa = s1 -e0_sa*da1;
+  f1_sa = s2 -e0_sa*da2;
+  f2_sa = -e0_sa*da3;
+  lambda_sa = 0.1; % lambda: poderacao do esforco de controle
+
+% Cond. iniciais  
+y2(1:2)=0; u2(1:2)=0; du2(1:2)=0;
+  
+for k=3:N  
+    %Controle PID
+    y(k) = -a1*y(k-1) -a2*y(k-2) +b0*u(k-d);
+    
+    %Eq. do sistema de controle
+    e(k) = yr(k)-y(k); % calcula o erro
+    u(k) = u(k-1) +s0*e(k) +s1*e(k-1) +s2*e(k-2);
+    
+   % Simulacao GMVC
+    y2(k) = -a1*y2(k-1) -a2*y2(k-2) +b0*u2(k-d);
+    
+    du2(k)= (1/(b0*e0_sa+lambda_sa))*(  ...
+        +s0*yr(k+d)+s1*yr(k+d-1)+s2*yr(k+d-2) ...
+        -f0_sa*y2(k) -f1_sa*y2(k-1) -f2_sa*y2(k-2) );
+    u2(k) = u2(k-1) +du2(k);
+              y(k) = -a1*y(k-1) -a2*y(k-2) +b0*u(k-1)  ...
+          +xi(k); 
+
+end
+
+figure();
+ subplot(211);
+   stairs(t,yr(1:N),':k'); hold;
+   stairs(t,y,'m','LineWidth',1.3);
+   stairs(t,y2,'b','LineWidth',1.3);
+     ylabel('Output (V)');
+     legend('yr(t)','y(t)','GMVC');
+ subplot(212);
+    stairs(t,u,'m','LineWidth',1.3); hold; 
+    stairs(t,u2,'b','LineWidth',1.3)
+     ylabel('Control (V)');
+     xlabel('Time (s)');
+suptitle('Argumentacao Estocastica via GMVC (baseado em sintonia PID)')   
+
