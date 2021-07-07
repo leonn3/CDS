@@ -1,0 +1,16 @@
+function [Jise, Jisu, J] = desempenho(yr, y, u, N)
+%Funcao custo de desempenho de seguimento de referencia
+for k=1:N,
+Jise(k) = (yr(k)-y(k))^2;
+end
+Jise = sum(Jise)/N;
+
+%Funcao custo de acao de controle
+for k=1:N,
+Jisu(k) = (u(k))^2;
+end
+Jisu = sum(Jisu)/N;
+
+%Funcao custo de eficiencia do sistema de controle:
+J = Jise + Jisu;
+end
